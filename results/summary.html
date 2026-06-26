@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Results Summary</title>
+<style>
+:root {
+  --bg: #f8fafc;
+  --card: #ffffff;
+  --text: #1e293b;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --accent: #3b82f6;
+  --good: #10b981;
+  --warn: #f59e0b;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font); background: var(--bg); color: var(--text); padding: 40px; line-height: 1.6; }
+h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+h2 { font-size: 18px; font-weight: 600; margin: 32px 0 16px; color: var(--text); }
+h3 { font-size: 14px; font-weight: 600; margin: 24px 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.subtitle { font-size: 14px; color: var(--muted); margin-bottom: 32px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border-bottom: 2px solid var(--border); }
+td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+tr:hover { background: #f1f5f9; }
+.good { color: var(--good); font-weight: 600; }
+.accent { color: var(--accent); font-weight: 600; }
+.mono { font-family: 'SF Mono', 'JetBrains Mono', monospace; font-size: 12px; }
+.highlight-row { background: #f0fdf4; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 32px; }
+.stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; text-align: center; }
+.stat-card .value { font-size: 32px; font-weight: 700; color: var(--accent); }
+.stat-card .label { font-size: 11px; color: var(--muted); margin-top: 4px; text-transform: uppercase; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.badge-green { background: #dcfce7; color: #166534; }
+.badge-blue { background: #dbeafe; color: #1e40af; }
+.badge-gray { background: #f1f5f9; color: #475569; }
+</style>
+</head>
+<body>
+<h1>Evaluation Results</h1>
+<p class="subtitle">ISDIN Hybrid Search Service — Ablation Study Summary</p>
+
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="value">0.77</div>
+    <div class="label">Best NDCG@10 (Products)</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">0.75</div>
+    <div class="label">Best NDCG@10 (Events)</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">290ms</div>
+    <div class="label">P50 Latency (cached)</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">858</div>
+    <div class="label">Total Experiment Runs</div>
+  </div>
+</div>
+
+<h2>Optimal Configuration</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>Parameter</th><th>Value</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Embedding Model</td><td class="mono">gemini-embedding-2</td><td>768 dimensions, multimodal capable</td></tr>
+      <tr><td>Multimodal</td><td><span class="badge badge-green">enabled</span></td><td>DAM images embedded alongside text</td></tr>
+      <tr><td>Caption</td><td><span class="badge badge-gray">disabled</span></td><td>Redundant with multimodal; dilutes signal</td></tr>
+      <tr><td>Popularity Normalization</td><td class="mono">percent_rank</td><td>Outperforms linear (+4.8pts) and log (+1.7pts)</td></tr>
+      <tr><td>Search Mode</td><td class="mono">hybrid</td><td>semantic_weight=0.95 (95% semantic, 5% keyword)</td></tr>
+      <tr><td>Popularity Boost</td><td class="mono">0.05</td><td>Minimal popularity signal avoids noise</td></tr>
+      <tr><td>Field Boosts (Products)</td><td class="mono">flat (all 1.0)</td><td>No significant impact at sw=0.95</td></tr>
+      <tr><td>Field Boosts (Events)</td><td class="mono">title=3.0, rest=1.0</td><td>+2-4 pts NDCG vs flat</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Sync-time Configuration Comparison</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>Config</th><th>NDCG@10</th><th>MRR</th><th>vs Baseline</th></tr></thead>
+    <tbody>
+      <tr class="highlight-row"><td>gemini-2 + multimodal</td><td class="good">0.7694</td><td>0.9417</td><td class="good">+0.4 pts</td></tr>
+      <tr><td>gemini-2 + text-only (baseline)</td><td>0.7655</td><td>0.9361</td><td>—</td></tr>
+      <tr><td>gemini-2 + multimodal + caption</td><td>0.7654</td><td>0.9384</td><td>-0.0 pts</td></tr>
+      <tr><td>gemini-2 + caption (short)</td><td>0.7487</td><td>0.9208</td><td>-1.7 pts</td></tr>
+      <tr><td>gemini-2 + log normalization</td><td>0.7482</td><td>0.9351</td><td>-1.7 pts</td></tr>
+      <tr><td>gemini-2 + caption (long)</td><td>0.7384</td><td>0.9242</td><td>-2.7 pts</td></tr>
+      <tr><td>gemini-2 + linear normalization</td><td>0.7175</td><td>0.9015</td><td>-4.8 pts</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Latency Comparison (30 queries, production)</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>Endpoint</th><th></th><th>Mean</th><th>P50</th><th>P95</th><th>Min</th><th>Max</th></tr></thead>
+    <tbody>
+      <tr><td>Products search (hybrid)</td><td><span class="badge badge-gray">cold</span></td><td>869ms</td><td>520ms</td><td>1320ms</td><td>370ms</td><td>7482ms</td></tr>
+      <tr class="highlight-row"><td>Products search (hybrid)</td><td><span class="badge badge-green">cached</span></td><td class="good">362ms</td><td class="good">290ms</td><td>726ms</td><td>239ms</td><td>1337ms</td></tr>
+      <tr><td>Products search (keyword)</td><td><span class="badge badge-blue">no embed</span></td><td>348ms</td><td>283ms</td><td>893ms</td><td>193ms</td><td>1005ms</td></tr>
+      <tr><td>Suggest (products)</td><td><span class="badge badge-green">cached</span></td><td>335ms</td><td>279ms</td><td>664ms</td><td>227ms</td><td>900ms</td></tr>
+      <tr><td>Events search</td><td><span class="badge badge-gray">cold</span></td><td>685ms</td><td>540ms</td><td>1838ms</td><td>392ms</td><td>2969ms</td></tr>
+      <tr><td>Events search</td><td><span class="badge badge-green">cached</span></td><td class="good">360ms</td><td class="good">301ms</td><td>618ms</td><td>260ms</td><td>782ms</td></tr>
+      <tr><td>Cross-index (unified)</td><td><span class="badge badge-gray">cold</span></td><td>384ms</td><td>369ms</td><td>521ms</td><td>284ms</td><td>711ms</td></tr>
+      <tr class="highlight-row"><td>Cross-index (unified)</td><td><span class="badge badge-green">cached</span></td><td class="good">256ms</td><td class="good">237ms</td><td>401ms</td><td>189ms</td><td>502ms</td></tr>
+      <tr><td>Cross-index (rerank)</td><td><span class="badge badge-gray">cold</span></td><td>689ms</td><td>644ms</td><td>978ms</td><td>521ms</td><td>1024ms</td></tr>
+      <tr><td>Cross-index (rerank)</td><td><span class="badge badge-green">cached</span></td><td>452ms</td><td>425ms</td><td>614ms</td><td>375ms</td><td>614ms</td></tr>
+      <tr><td colspan="7" style="border-top:2px solid var(--border)"></td></tr>
+      <tr><td>Products API (Algolia baseline)</td><td><span class="badge badge-gray">1st</span></td><td>928ms</td><td>921ms</td><td>1457ms</td><td>437ms</td><td>1473ms</td></tr>
+      <tr><td>Products API (Algolia baseline)</td><td><span class="badge badge-gray">2nd</span></td><td>948ms</td><td>937ms</td><td>1471ms</td><td>433ms</td><td>1641ms</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top:12px; font-size:12px; color:var(--muted)">Search API with embedding cache is 3.2x faster at P50 than the current Products API (Algolia).</p>
+</div>
+
+<h2>Benchmark Coverage</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>Benchmark</th><th>Queries</th><th>Categories</th><th>Evaluation Method</th></tr></thead>
+    <tbody>
+      <tr><td>Products</td><td>114</td><td>17 (A-Q): synonyms, ingredients, typos, visual, multilingual...</td><td>Graded relevance (0-3) per product ID</td></tr>
+      <tr><td>Events</td><td>22</td><td>5 (R-V): intent, attribute, location, theme, difficulty</td><td>Group-based binary (any matching event is relevant)</td></tr>
+      <tr><td>Cross-index</td><td>5</td><td>Mixed products + events</td><td>Graded relevance per item ID</td></tr>
+    </tbody>
+  </table>
+</div>
+</body>
+</html>

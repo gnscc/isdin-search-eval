@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ISDIN Search Evaluation — TFM</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="logo">
+      <h1>ISDIN Search</h1>
+      <span class="subtitle">Evaluation Portal</span>
+    </div>
+    <ul class="nav-sections">
+      <li class="nav-section">
+        <h3>Benchmark</h3>
+        <ul>
+          <li><a href="benchmark/products.html" target="content">Products (114 queries)</a></li>
+          <li><a href="benchmark/events.html" target="content">Events (22 queries)</a></li>
+          <li><a href="benchmark/cross-index.html" target="content">Cross-Index (5 queries)</a></li>
+        </ul>
+      </li>
+      <li class="nav-section">
+        <h3>Experiments</h3>
+        <ul>
+          <li><a href="experiments/runs.html" target="content">All Runs</a></li>
+        </ul>
+      </li>
+      <li class="nav-section">
+        <h3>Embedding Space Analysis</h3>
+        <ul>
+          <li><a href="embeddings/gemini-2-text.html" target="content">Gemini 2 (text)</a></li>
+          <li><a href="embeddings/gemini-2-images.html" target="content">Gemini 2 (multimodal)</a></li>
+          <li><a href="embeddings/gemini-2-caption.html" target="content">Gemini 2 (caption)</a></li>
+          <li><a href="embeddings/gemini-2-images-caption.html" target="content">Gemini 2 (multi+caption)</a></li>
+          <li><a href="embeddings/gemini-001-text.html" target="content">Gemini 001 (baseline)</a></li>
+          <li><a href="embeddings/gemini-2-text-3072d.html" target="content">Gemini 2 (3072d)</a></li>
+          <li><a href="embeddings/titan-v2-text-1024d.html" target="content">Titan v2 (text)</a></li>
+          <li><a href="embeddings/titan-v2-caption-1024d.html" target="content">Titan v2 (caption)</a></li>
+          <li class="divider"></li>
+          <li><a href="embeddings/gender-bias.html" target="content">Gender Bias Analysis</a></li>
+        </ul>
+      </li>
+      <li class="nav-section">
+        <h3>Results</h3>
+        <ul>
+          <li><a href="results/summary.html" target="content">Summary &amp; Latency</a></li>
+        </ul>
+      </li>
+    </ul>
+    <div class="footer">
+      <p>Ignasi Cervero &middot; UPC 2026</p>
+      <p class="muted">MSc Data Science — TFM</p>
+    </div>
+  </nav>
+  <main class="content">
+    <iframe name="content" id="content-frame" src="results/summary.html"></iframe>
+  </main>
+</div>
+</body>
+</html>
