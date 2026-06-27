@@ -301,6 +301,10 @@ def normalize_index(index: str) -> list[dict]:
     gt = load_ground_truth(index)
     queries = load_queries(index)
 
+    # Events v2 runs already have correct metrics from evaluate_events_v2.py
+    # (binary relevance, group-based). Use them directly instead of recalculating.
+    use_precomputed = (index == 'events')
+
     # For events, only process v2 runs
     if index == 'events':
         patterns = ['events-v2-*.json']
@@ -320,54 +324,89 @@ def normalize_index(index: str) -> list[dict]:
                 continue
 
             config = derive_config(data, f.name)
-            results_by_query = extract_results(data)
 
-            if not results_by_query:
-                continue
-
-            # Compute per-query metrics (iterate over run results, like evaluate_benchmark)
-            per_query = []
-            for qid in sorted(results_by_query.keys()):
-                gt_j = gt.get(qid)
-                if gt_j is None:
+            if use_precomputed:
+                # Events v2: use pre-computed metrics from evaluate_events_v2.py
+                aggregated = data.get('metrics', {})
+                if not aggregated:
                     continue
 
-                items = results_by_query.get(qid, [])
-                result_ids = [item['id'] for item in items]
-                q_info = queries.get(qid, {})
-                metrics = compute_query_metrics(result_ids, gt_j)
+                # Build per-query from results (already has ndcg@10, mrr per query)
+                per_query = []
+                for r in data.get('results', []):
+                    qid = r.get('query_id')
+                    if not qid:
+                        continue
+                    q_info = queries.get(qid, {})
+                    items = [
+                        {'id': str(item.get('product_id', '')), 'name': item.get('name', ''), 'score': round(item.get('score') or 0, 4), 'relevance': item.get('relevant', 0)}
+                        for item in r.get('results', [])[:10]
+                    ]
+                    per_query.append({
+                        'query_id': qid,
+                        'query': q_info.get('query', r.get('query', '')),
+                        'category': q_info.get('category', r.get('category', qid[0] if qid else '?')),
+                        'n_results': r.get('n_results', len(items)),
+                        'ndcg@5': r.get('ndcg@5', 0),
+                        'ndcg@10': r.get('ndcg@10', 0),
+                        'precision@5': r.get('precision@5', 0),
+                        'precision@10': r.get('precision@10', 0),
+                        'f1@5': 0,
+                        'f1@10': 0,
+                        'mrr': r.get('mrr', 0),
+                        'items': items,
+                    })
+            else:
+                # Products/cross-index: compute from GT
+                results_by_query = extract_results(data)
 
-                # Annotate items with relevance
-                annotated_items = []
-                for i, item in enumerate(items):
-                    annotated_items.append({
-                        **item,
-                        'relevance': gt_j.get(item['id'], 0),
+                if not results_by_query:
+                    continue
+
+                # Compute per-query metrics (iterate over run results, like evaluate_benchmark)
+                per_query = []
+                for qid in sorted(results_by_query.keys()):
+                    gt_j = gt.get(qid)
+                    if gt_j is None:
+                        continue
+
+                    items = results_by_query.get(qid, [])
+                    result_ids = [item['id'] for item in items]
+                    q_info = queries.get(qid, {})
+                    metrics = compute_query_metrics(result_ids, gt_j)
+
+                    annotated_items = []
+                    for item in items:
+                        annotated_items.append({
+                            **item,
+                            'relevance': gt_j.get(item['id'], 0),
+                        })
+
+                    per_query.append({
+                        'query_id': qid,
+                        'query': q_info.get('query', ''),
+                        'category': q_info.get('category', qid[0] if qid else '?'),
+                        'n_results': len(result_ids),
+                        'items': annotated_items,
+                        **metrics,
                     })
 
-                per_query.append({
-                    'query_id': qid,
-                    'query': q_info.get('query', ''),
-                    'category': q_info.get('category', qid[0] if qid else '?'),
-                    'n_results': len(result_ids),
-                    'items': annotated_items,
-                    **metrics,
-                })
+                if not per_query:
+                    continue
 
-            if not per_query:
-                continue
+                # Aggregate metrics
+                n = len(per_query)
+                aggregated = {
+                    'ndcg@5': round(sum(q['ndcg@5'] for q in per_query) / n, 4),
+                    'ndcg@10': round(sum(q['ndcg@10'] for q in per_query) / n, 4),
+                    'precision@5': round(sum(q['precision@5'] for q in per_query) / n, 4),
+                    'precision@10': round(sum(q['precision@10'] for q in per_query) / n, 4),
+                    'f1@5': round(sum(q['f1@5'] for q in per_query) / n, 4),
+                    'f1@10': round(sum(q['f1@10'] for q in per_query) / n, 4),
+                    'mrr': round(sum(q['mrr'] for q in per_query) / n, 4),
+                }
 
-            # Aggregate metrics
-            n = len(per_query)
-            aggregated = {
-                'ndcg@5': round(sum(q['ndcg@5'] for q in per_query) / n, 4),
-                'ndcg@10': round(sum(q['ndcg@10'] for q in per_query) / n, 4),
-                'precision@5': round(sum(q['precision@5'] for q in per_query) / n, 4),
-                'precision@10': round(sum(q['precision@10'] for q in per_query) / n, 4),
-                'f1@5': round(sum(q['f1@5'] for q in per_query) / n, 4),
-                'f1@10': round(sum(q['f1@10'] for q in per_query) / n, 4),
-                'mrr': round(sum(q['mrr'] for q in per_query) / n, 4),
-            }
+            # For precomputed (events), don't recalculate aggregated — already set from data['metrics']
 
             # Skip if all zeros
             if aggregated['ndcg@10'] == 0 and aggregated['mrr'] == 0:
@@ -386,7 +425,7 @@ def normalize_index(index: str) -> list[dict]:
                 'label': data.get('label', f.stem),
                 'config': config,
                 'metrics': aggregated,
-                'n_queries': n,
+                'n_queries': len(per_query),
                 'per_query': per_query,
             })
 
