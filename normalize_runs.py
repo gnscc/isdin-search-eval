@@ -57,10 +57,15 @@ def mrr(relevances: list[int]) -> float:
 
 
 def compute_query_metrics(result_ids: list[str], gt_judgments: dict[str, int]) -> dict:
-    """Compute all metrics for a single query."""
+    """Compute all metrics for a single query.
+
+    Matches evaluate_benchmark.py exactly:
+    - total_relevant = len(gt_judgments) (all judged items, not just score >= 1)
+    - mrr truncated to k
+    """
     relevances = [gt_judgments.get(rid, 0) for rid in result_ids]
-    ideal = list(gt_judgments.values())
-    total_relevant = sum(1 for v in gt_judgments.values() if v >= 1)
+    ideal = sorted(gt_judgments.values(), reverse=True)
+    total_relevant = len(gt_judgments)
 
     return {
         'ndcg@5': round(ndcg_at_k(relevances, ideal, 5), 4),
@@ -69,7 +74,7 @@ def compute_query_metrics(result_ids: list[str], gt_judgments: dict[str, int]) -
         'precision@10': round(precision_at_k(relevances, 10), 4),
         'f1@5': round(f1_at_k(relevances, total_relevant, 5), 4),
         'f1@10': round(f1_at_k(relevances, total_relevant, 10), 4),
-        'mrr': round(mrr(relevances), 4),
+        'mrr': round(mrr(relevances[:10]), 4),
         'relevances': relevances[:20],
     }
 
@@ -139,6 +144,41 @@ import re  # noqa: E402
 
 def derive_config(data: dict, filename: str) -> dict:
     """Derive configuration variables from run data and filename."""
+    # Special cases for baselines
+    if 'products-api' in filename:
+        return {
+            'model': 'products-api',
+            'multimodal': '-',
+            'pop_norm': '-',
+            'mode': 'lexical',
+            'alpha': None,
+            'beta': None,
+            'field_boosts': '-',
+            'variant': '',
+        }
+    if 'search-api-hybrid-baseline' in filename:
+        return {
+            'model': 'gemini-001',
+            'multimodal': 'none',
+            'pop_norm': 'percent_rank',
+            'mode': 'hybrid',
+            'alpha': 0.6,
+            'beta': 0.2,
+            'field_boosts': 'intuition',
+            'variant': '',
+        }
+    if 'search-api-embedding2' in filename:
+        return {
+            'model': 'gemini-2',
+            'multimodal': 'none',
+            'pop_norm': 'percent_rank',
+            'mode': 'hybrid',
+            'alpha': 0.6,
+            'beta': 0.2,
+            'field_boosts': 'intuition',
+            'variant': '',
+        }
+
     sync_label = data.get('sync_label', '')
     config = data.get('config', {})
 
@@ -285,13 +325,14 @@ def normalize_index(index: str) -> list[dict]:
             if not results_by_query:
                 continue
 
-            # Compute per-query metrics
+            # Compute per-query metrics (iterate over run results, like evaluate_benchmark)
             per_query = []
-            for qid, items in results_by_query.items():
-                gt_j = gt.get(qid, {})
-                if not gt_j and not items:
+            for qid in sorted(results_by_query.keys()):
+                gt_j = gt.get(qid)
+                if gt_j is None:
                     continue
 
+                items = results_by_query.get(qid, [])
                 result_ids = [item['id'] for item in items]
                 q_info = queries.get(qid, {})
                 metrics = compute_query_metrics(result_ids, gt_j)
@@ -334,6 +375,10 @@ def normalize_index(index: str) -> list[dict]:
 
             # Skip pure semantic mode runs (alpha=1.0 hybrid is equivalent)
             if config['mode'] == 'semantic':
+                continue
+
+            # Skip unified variants that aren't "both" (redundant with single-index search)
+            if config['mode'] == 'unified' and config['variant'] not in ('both', ''):
                 continue
 
             normalized.append({

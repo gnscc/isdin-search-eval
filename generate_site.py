@@ -480,7 +480,7 @@ function renderTable(area) {{
     cols.forEach(([key]) => {{
       const val = getColValue(run, key);
       const isMetric = ['ndcg@5','ndcg@10','precision@5','precision@10','mrr'].includes(key);
-      const isBest = isMetric && val === bestValues[key];
+      const isBest = false;
       if (key === 'mode') {{
         html += `<td><span class="badge badge-${{val}}">${{val.toUpperCase()}}</span></td>`;
       }} else if (isMetric) {{
@@ -497,13 +497,16 @@ function renderTable(area) {{
 }}
 
 function getColumns() {{
-  const base = [
-    ['model', 'Model'], ['multimodal', 'Multimodal'], ['pop_norm', 'Pop. Norm.'],
-    ['alpha', '&alpha;'], ['beta', '&beta;'], ['field_boosts', 'Field Boosts'],
-  ];
-  if (currentIndex === 'cross-index') {{
-    base.splice(3, 0, ['mode', 'Mode']);
-    base.push(['variant', 'Variant']);
+  let base;
+  if (currentIndex === 'events') {{
+    base = [['model', 'Model'], ['alpha', '&alpha;'], ['field_boosts', 'Field Boosts']];
+  }} else if (currentIndex === 'cross-index') {{
+    base = [['multimodal', 'Multimodal'], ['mode', 'Mode'], ['variant', 'Variant']];
+  }} else {{
+    base = [
+      ['model', 'Model'], ['multimodal', 'Multimodal'], ['pop_norm', 'Pop. Norm.'],
+      ['alpha', '&alpha;'], ['beta', '&beta;'], ['field_boosts', 'Field Boosts'],
+    ];
   }}
   base.push(['ndcg@5', 'NDCG@5'], ['ndcg@10', 'NDCG@10'], ['f1@5', 'F1@5'], ['f1@10', 'F1@10'], ['mrr', 'MRR']);
   return base;
@@ -545,7 +548,7 @@ function findBestValues(runs, cols) {{
 
 function renderFilters() {{
   const runs = RUNS[currentIndex] || [];
-  const filterKeys = ['model', 'multimodal', 'pop_norm', 'field_boosts', 'alpha', 'beta'];
+  const filterKeys = currentIndex === 'events' ? ['model', 'alpha', 'field_boosts'] : ['model', 'multimodal', 'pop_norm', 'field_boosts', 'alpha', 'beta'];
   const labels = {{model:'Model', multimodal:'Multimodal', pop_norm:'Pop. Norm.', field_boosts:'Field Boosts', alpha:'\\u03b1', beta:'\\u03b2'}};
   const filters = FILTERS[currentIndex] || {{}};
 
@@ -701,9 +704,7 @@ function renderDetail(area) {{
     html += '<table><thead><tr><th>ID</th><th>Query</th><th>Cat</th><th>NDCG@5</th><th>NDCG@10</th><th>F1@5</th><th>F1@10</th><th>MRR</th></tr></thead><tbody>';
     sorted.forEach(r => {{
       const m = (k) => (r[k] || 0).toFixed(4);
-      const ndcg = r['ndcg@10'] || 0;
-      const color = ndcg >= 0.8 ? 'var(--good)' : ndcg < 0.3 ? 'var(--danger)' : '';
-      html += `<tr style="cursor:pointer;${{color ? 'color:'+color : ''}}" onclick="selectedQueryId='${{r.query_id}}';detailSubTab='query-detail';renderContent()"><td>${{r.query_id}}</td><td>${{r.query || ''}}</td><td>${{r.category || ''}}</td><td class="metric">${{m('ndcg@5')}}</td><td class="metric">${{m('ndcg@10')}}</td><td class="metric">${{m('f1@5')}}</td><td class="metric">${{m('f1@10')}}</td><td class="metric">${{m('mrr')}}</td></tr>`;
+      html += `<tr style="cursor:pointer" onclick="selectedQueryId='${{r.query_id}}';detailSubTab='query-detail';renderContent()"><td>${{r.query_id}}</td><td>${{r.query || ''}}</td><td>${{r.category || ''}}</td><td class="metric">${{m('ndcg@5')}}</td><td class="metric">${{m('ndcg@10')}}</td><td class="metric">${{m('f1@5')}}</td><td class="metric">${{m('f1@10')}}</td><td class="metric">${{m('mrr')}}</td></tr>`;
     }});
     html += '</tbody></table>';
   }}
@@ -841,17 +842,15 @@ function renderCompare(area) {{
 
     html += '<div style="overflow-x:auto"><table><thead><tr><th>ID</th><th>Query</th>';
     runs.forEach(r => html += `<th>#${{r.id}} NDCG@10</th>`);
-    html += '<th>Variance</th></tr></thead><tbody>';
+    html += '</tr></thead><tbody>';
 
     const rows = sortedQids.map(qid => {{
       const vals = runs.map((r, ri) => {{
         const item = allDetail[ri].find(x => x.query_id === qid);
         return item ? (item['ndcg@10'] || 0) : 0;
       }});
-      const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
-      const variance = vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length;
       const query = allDetail.flat().find(x => x.query_id === qid);
-      return {{ qid, query: query?.query || '', vals, variance }};
+      return {{ qid, query: query?.query || '', vals }};
     }});
     rows.sort((a, b) => a.qid.localeCompare(b.qid, undefined, {{numeric: true}}));
 
@@ -859,10 +858,9 @@ function renderCompare(area) {{
     rows.forEach(row => {{
       html += `<tr style="cursor:pointer" onclick="selectedQueryId='${{row.qid}}';compareSubTab='query-detail';renderContent()"><td>${{row.qid}}</td><td>${{row.query}}</td>`;
       row.vals.forEach(v => {{
-        const color = v >= 0.8 ? 'var(--good)' : v < 0.3 ? 'var(--danger)' : '';
-        html += `<td class="metric" style="${{color ? 'color:'+color : ''}}">${{v.toFixed(3)}}</td>`;
+        html += `<td class="metric">${{v.toFixed(3)}}</td>`;
       }});
-      html += `<td class="metric" style="color:var(--muted)">${{row.variance.toFixed(4)}}</td></tr>`;
+      html += '</tr>';
     }});
     html += '</tbody></table></div>';
   }}
