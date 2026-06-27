@@ -253,7 +253,8 @@ def generate_index():
       <li class="nav-section">
         <h3>Results</h3>
         <ul>
-          <li><a href="results/summary.html" target="content">Summary &amp; Latency</a></li>
+          <li><a href="results/comparison.html" target="content">System Comparison</a></li>
+          <li><a href="results/summary.html" target="content">Latency</a></li>
         </ul>
       </li>
     </ul>
@@ -263,7 +264,7 @@ def generate_index():
     </div>
   </nav>
   <main class="content">
-    <iframe name="content" id="content-frame" src="results/summary.html"></iframe>
+    <iframe name="content" id="content-frame" src="results/comparison.html"></iframe>
   </main>
 </div>
 </body>
@@ -303,6 +304,351 @@ def generate_embeddings():
         if src.exists():
             shutil.copy2(src, SITE_DIR / 'embeddings' / f'{name}.html')
             print(f'  embeddings/{name}.html')
+
+
+def generate_comparison(runs: dict[str, list[dict]]):
+    """Generate the 3-system comparison landing page."""
+    products = runs.get('products', [])
+
+    # Find the 3 key runs (ordered: baseline first → production last)
+    run_map = {}
+    for r in products:
+        l = r.get('label', '')
+        if 'products-api' in l:
+            run_map['products-api'] = r
+        elif 'hybrid-baseline' in l:
+            run_map['baseline'] = r
+        elif 'multimodal-caption_products_hybrid_sw0.95_pb0.05' in l:
+            run_map['production'] = r
+
+    systems = [
+        ('Products API', 'Algolia lexical search', run_map.get('products-api')),
+        ('Intuition Baseline', 'gemini-001, α=0.6, β=0.2, weighted boosts', run_map.get('baseline')),
+        ('ISDIN Search Service', 'gemini-2, multimodal+caption, α=0.95, β=0.05', run_map.get('production')),
+    ]
+    systems = [(n, d, r) for n, d, r in systems if r is not None]
+
+    if len(systems) < 3:
+        print(f'  WARNING: only found {len(systems)}/3 systems for comparison')
+
+    metrics_keys = ['ndcg@5', 'ndcg@10', 'f1@5', 'f1@10', 'mrr']
+
+    html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Comparison — ISDIN Search Evaluation</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+{CSS}
+body {{ padding: 40px; }}
+h1 {{ font-size: 24px; font-weight: 700; margin-bottom: 4px; }}
+.subtitle {{ font-size: 14px; color: var(--muted); margin-bottom: 32px; }}
+.systems {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 32px; }}
+.system-card {{ background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; text-align: center; }}
+.system-card h3 {{ font-size: 15px; margin-bottom: 4px; }}
+.system-card .desc {{ font-size: 11px; color: var(--muted); margin-bottom: 16px; }}
+.system-card .score {{ font-size: 36px; font-weight: 700; color: var(--accent); }}
+.system-card .score-label {{ font-size: 11px; color: var(--muted); text-transform: uppercase; margin-top: 4px; }}
+.chart-container {{ background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 24px; }}
+.chart-container h3 {{ font-size: 15px; margin-bottom: 16px; }}
+.chart-container canvas {{ max-height: 300px; }}
+.sub-tabs {{ display: flex; gap: 0; border-bottom: 1px solid var(--border); margin: 24px 0 16px; }}
+.sub-tab {{ padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; font-size: 13px; color: var(--muted); font-weight: 500; }}
+.sub-tab:hover {{ color: var(--text); }}
+.sub-tab.active {{ border-bottom-color: var(--accent); color: var(--accent); }}
+.tab-panel {{ margin-bottom: 24px; }}
+table {{ width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }}
+th {{ text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; border-bottom: 2px solid var(--border); }}
+td {{ padding: 10px 14px; border-bottom: 1px solid var(--border); }}
+.metric {{ font-family: var(--mono); font-size: 12px; }}
+.improvement {{ color: var(--good); font-size: 11px; font-weight: 600; }}
+</style>
+</head>
+<body>
+<h1>System Comparison</h1>
+<p class="subtitle">Three stages of the ISDIN product search system, evaluated on 114 queries.</p>
+
+<div class="systems">'''
+
+    for name, desc, run in systems:
+        ndcg = run['metrics'].get('ndcg@10', 0)
+        html += f'''<div class="system-card">
+  <h3>{name}</h3>
+  <div class="desc">{desc}</div>
+  <div class="score">{ndcg:.3f}</div>
+  <div class="score-label">NDCG@10</div>
+</div>'''
+
+    html += '''</div>
+
+<div class="chart-container">
+  <h3>Metric Comparison</h3>
+  <canvas id="comp-chart"></canvas>
+</div>
+
+<table>
+<thead><tr><th>Metric</th>'''
+
+    for name, _, _ in systems:
+        html += f'<th>{name}</th>'
+    html += '<th>Improvement</th></tr></thead><tbody>'
+
+    for mk in metrics_keys:
+        html += f'<tr><td><strong>{mk.upper()}</strong></td>'
+        vals = []
+        for _, _, run in systems:
+            v = run['metrics'].get(mk, 0)
+            vals.append(v)
+            html += f'<td class="metric">{v:.4f}</td>'
+        if len(vals) >= 2 and vals[0] > 0:
+            improvement = (vals[-1] - vals[0]) / vals[0] * 100
+            sign = '+' if improvement >= 0 else ''
+            html += f'<td class="improvement">{sign}{improvement:.0f}%</td>'
+        else:
+            html += '<td>-</td>'
+        html += '</tr>'
+
+    html += '</tbody></table></div>'
+
+    # Prepare per-query data for JS (merge items from detail file)
+    detail_file = SITE_DIR / 'data' / 'products-detail.json'
+    detail_data = json.loads(detail_file.read_text()) if detail_file.exists() else {}
+
+    all_per_query = {}
+    for name, _, run in systems:
+        pq = run.get('per_query', [])
+        run_detail = detail_data.get(str(run['id']), {})
+        # Merge items into per_query
+        for q in pq:
+            qid = q.get('query_id')
+            if qid and qid in run_detail:
+                q['items'] = run_detail[qid]
+        all_per_query[name] = pq
+
+    cat_names_map = {
+        'A': 'Sinónimo semántico', 'B': 'Problema / skin concern', 'C': 'Ingrediente',
+        'D': 'Marca / sublínea', 'E': 'Atributo (SPF, formato)', 'F': 'Broad / intención vaga',
+        'G': 'Multilingüe', 'H': 'Prefijo / autocompletado', 'I': 'Typo / error ortográfico',
+        'J': 'Zero-result', 'K': 'Parte del cuerpo', 'L': 'Caso de uso / ocasión',
+        'M': 'Multi-intent', 'N': 'Nombre completo', 'O': 'Conversacional',
+        'P': 'Refill vs completo', 'Q': 'Visual / multimodal',
+    }
+
+    # By Category table (static)
+    html += '<div id="panel-category" class="tab-panel" style="display:none"><div class="chart-container"><h3>NDCG@10 by Category</h3>'
+    html += '<div style="overflow-x:auto"><table><thead><tr><th>Category</th><th>Name</th>'
+    for name, _, _ in systems:
+        html += f'<th>{name}</th>'
+    html += '</tr></thead><tbody>'
+
+    all_cats = set()
+    system_cats = []
+    for _, _, run in systems:
+        cats = {}
+        for q in run.get('per_query', []):
+            cat = q.get('category', '?')
+            all_cats.add(cat)
+            if cat not in cats:
+                cats[cat] = []
+            cats[cat].append(q.get('ndcg@10', 0))
+        system_cats.append(cats)
+
+    for cat in sorted(all_cats):
+        html += f'<tr style="cursor:pointer" onclick="showByQuery(\'{cat}\')"><td><strong>{cat}</strong></td><td style="font-size:11px;color:var(--muted)">{cat_names_map.get(cat, "")}</td>'
+        for cats in system_cats:
+            vals = cats.get(cat, [])
+            avg = sum(vals) / len(vals) if vals else 0
+            html += f'<td class="metric">{avg:.3f}</td>'
+        html += '</tr>'
+    html += '</tbody></table></div></div></div>'
+
+    # By Query panel (dynamic via JS)
+    html += '<div id="panel-query" class="tab-panel" style="display:none"></div>'
+
+    # Query Detail panel (dynamic via JS)
+    html += '<div id="panel-detail" class="tab-panel" style="display:none"></div>'
+
+    # Tabs navigation (insert before chart)
+    tabs_html = '''<div class="sub-tabs" style="margin:24px 0 16px">
+  <div class="sub-tab active" onclick="switchCompTab('overview')">Overview</div>
+  <div class="sub-tab" onclick="switchCompTab('category')">By Category</div>
+  <div class="sub-tab" onclick="switchCompTab('query')">By Query</div>
+  <div class="sub-tab" onclick="switchCompTab('detail')">Query Detail</div>
+</div>
+<div id="panel-overview">'''
+
+    # Insert tabs before the chart
+    html = html.replace('<div class="chart-container">\n  <h3>Metric Comparison</h3>', tabs_html + '<div class="chart-container">\n  <h3>Metric Comparison</h3>')
+    # Close overview panel before category
+    html = html.replace('<div id="panel-category"', '</div><div id="panel-category"')
+
+    # Embed per-query data
+    per_query_js = json.dumps(all_per_query, ensure_ascii=False)
+    system_names_js = json.dumps([n for n, _, _ in systems])
+    cat_names_js = json.dumps(cat_names_map, ensure_ascii=False)
+
+    # Chart data
+    colors = ['#ef4444', '#f59e0b', '#3b82f6']
+    html += f'''
+<script>
+new Chart(document.getElementById('comp-chart'), {{
+  type: 'bar',
+  data: {{
+    labels: {json.dumps([mk.upper() for mk in metrics_keys])},
+    datasets: ['''
+
+    for i, (name, _, run) in enumerate(systems):
+        vals = [run['metrics'].get(mk, 0) for mk in metrics_keys]
+        html += f'''{{
+      label: '{name}',
+      data: {json.dumps(vals)},
+      backgroundColor: '{colors[i]}80',
+      borderColor: '{colors[i]}',
+      borderWidth: 1,
+    }},'''
+
+    html += f'''],
+  }},
+  options: {{
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {{ y: {{ beginAtZero: true, max: 1 }} }},
+    plugins: {{ legend: {{ position: 'top' }} }},
+  }},
+}});
+
+// --- Tab switching and dynamic content ---
+const PER_QUERY = {per_query_js};
+const SYSTEM_NAMES = {system_names_js};
+const CAT_NAMES = {cat_names_js};
+const COLORS = ['#ef4444', '#f59e0b', '#3b82f6'];
+let currentCatFilter = null;
+let currentQueryId = null;
+
+function switchCompTab(tab) {{
+  document.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel, #panel-overview').forEach(p => p.style.display = 'none');
+  event.target.classList.add('active');
+  document.getElementById('panel-' + tab).style.display = 'block';
+  if (tab === 'query') renderByQuery();
+  if (tab === 'detail') renderQueryDetail();
+}}
+
+function showByQuery(cat) {{
+  currentCatFilter = cat;
+  switchCompTab('query');
+  document.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.sub-tab')[2].classList.add('active');
+}}
+
+function renderByQuery() {{
+  const panel = document.getElementById('panel-query');
+  let html = '';
+  if (currentCatFilter) {{
+    html += `<div style="margin-bottom:12px"><button onclick="currentCatFilter=null;renderByQuery()" style="cursor:pointer;padding:4px 12px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;font-size:12px">\\u2190 All categories</button> <strong>${{currentCatFilter}}: ${{CAT_NAMES[currentCatFilter] || ''}}</strong></div>`;
+  }}
+  html += '<p style="font-size:11px;color:#64748b;margin-bottom:8px">Click a query to see returned items</p>';
+  html += '<div style="overflow-x:auto"><table><thead><tr><th>ID</th><th>Query</th>';
+  SYSTEM_NAMES.forEach(n => html += `<th>${{n}}</th>`);
+  html += '</tr></thead><tbody>';
+
+  // Collect all query IDs
+  const allQids = new Set();
+  SYSTEM_NAMES.forEach(n => PER_QUERY[n].forEach(q => {{
+    if (!currentCatFilter || q.category === currentCatFilter) allQids.add(q.query_id);
+  }}));
+  const sortedQids = [...allQids].sort((a, b) => a.localeCompare(b, undefined, {{numeric: true}}));
+
+  sortedQids.forEach(qid => {{
+    const qInfo = SYSTEM_NAMES.map(n => PER_QUERY[n].find(q => q.query_id === qid)).find(x => x);
+    html += `<tr style="cursor:pointer" onclick="currentQueryId='${{qid}}';switchCompTab('detail');document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-tab')[3].classList.add('active')">`;
+    html += `<td>${{qid}}</td><td>${{qInfo?.query || ''}}</td>`;
+    SYSTEM_NAMES.forEach(n => {{
+      const q = PER_QUERY[n].find(x => x.query_id === qid);
+      const v = q ? (q['ndcg@10'] || 0) : 0;
+      html += `<td class="metric">${{v.toFixed(3)}}</td>`;
+    }});
+    html += '</tr>';
+  }});
+  html += '</tbody></table></div>';
+  panel.innerHTML = html;
+}}
+
+function renderQueryDetail() {{
+  const panel = document.getElementById('panel-detail');
+  const allQids = new Set();
+  SYSTEM_NAMES.forEach(n => PER_QUERY[n].forEach(q => allQids.add(q.query_id)));
+  const sortedQids = [...allQids].sort((a, b) => a.localeCompare(b, undefined, {{numeric: true}}));
+
+  let html = '<div style="margin-bottom:16px;display:flex;align-items:center;gap:12px">';
+  html += '<label style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase">Query:</label>';
+  html += `<select style="font-size:13px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;min-width:300px" onchange="currentQueryId=this.value;renderQueryDetail()">`;
+  if (!currentQueryId) html += '<option value="">-- Select --</option>';
+  sortedQids.forEach(qid => {{
+    const q = SYSTEM_NAMES.map(n => PER_QUERY[n].find(x => x.query_id === qid)).find(x => x);
+    html += `<option value="${{qid}}" ${{qid === currentQueryId ? 'selected' : ''}}>${{qid}}: ${{q?.query || ''}}</option>`;
+  }});
+  html += '</select>';
+  if (currentQueryId) {{
+    const idx = sortedQids.indexOf(currentQueryId);
+    if (idx > 0) html += `<button onclick="currentQueryId='${{sortedQids[idx-1]}}';renderQueryDetail()" style="cursor:pointer;padding:4px 12px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;font-size:12px">\\u2190 Prev</button>`;
+    if (idx < sortedQids.length-1) html += `<button onclick="currentQueryId='${{sortedQids[idx+1]}}';renderQueryDetail()" style="cursor:pointer;padding:4px 12px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;font-size:12px">Next \\u2192</button>`;
+  }}
+  html += '</div>';
+
+  if (!currentQueryId) {{
+    html += '<div style="padding:40px;text-align:center;color:#64748b">Select a query above</div>';
+  }} else {{
+    const qInfo = SYSTEM_NAMES.map(n => PER_QUERY[n].find(x => x.query_id === currentQueryId)).find(x => x);
+    html += `<h3 style="margin-bottom:4px">${{currentQueryId}}: "${{qInfo?.query || ''}}"</h3>`;
+    html += `<div style="color:#64748b;font-size:12px;margin-bottom:16px">Category: ${{qInfo?.category || '?'}} — ${{CAT_NAMES[qInfo?.category] || ''}}</div>`;
+
+    // Metrics per system
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:20px">';
+    SYSTEM_NAMES.forEach((n, i) => {{
+      const q = PER_QUERY[n].find(x => x.query_id === currentQueryId);
+      const ndcg = q ? (q['ndcg@10'] || 0).toFixed(4) : '-';
+      const f1 = q ? (q['f1@10'] || 0).toFixed(4) : '-';
+      const mrr_v = q ? (q['mrr'] || 0).toFixed(4) : '-';
+      html += `<div style="border:2px solid ${{COLORS[i]}};border-radius:8px;padding:14px;text-align:center">`;
+      html += `<div style="font-weight:600;color:${{COLORS[i]}};margin-bottom:8px">${{n}}</div>`;
+      html += `<div style="font-size:11px;color:#64748b">NDCG@10=<strong>${{ndcg}}</strong> | F1@10=<strong>${{f1}}</strong> | MRR=<strong>${{mrr_v}}</strong></div>`;
+      html += '</div>';
+    }});
+    html += '</div>';
+
+    // Items per system (from per_query items if available)
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">';
+    SYSTEM_NAMES.forEach((n, i) => {{
+      const q = PER_QUERY[n].find(x => x.query_id === currentQueryId);
+      const items = q?.items || [];
+      html += `<div style="border:2px solid ${{COLORS[i]}};border-radius:8px;padding:16px">`;
+      html += `<div style="font-weight:600;color:${{COLORS[i]}};margin-bottom:8px">${{n}}</div>`;
+      if (items.length) {{
+        html += '<table style="width:100%"><thead><tr><th>#</th><th>Name</th><th>Rel</th></tr></thead><tbody>';
+        items.slice(0, 10).forEach((item, j) => {{
+          const rel = item.relevance || 0;
+          const bg = rel >= 3 ? 'background:#dcfce7' : rel >= 2 ? 'background:#fef9c3' : rel >= 1 ? 'background:#fef3c7' : '';
+          html += `<tr style="${{bg}}"><td>${{j+1}}</td><td style="font-size:11px">${{item.name || item.id || '-'}}</td><td>${{rel > 0 ? '<strong>'+rel+'</strong>' : '0'}}</td></tr>`;
+        }});
+        html += '</tbody></table>';
+      }} else {{
+        html += '<div style="color:#64748b;font-size:12px">No item detail</div>';
+      }}
+      html += '</div>';
+    }});
+    html += '</div>';
+  }}
+  panel.innerHTML = html;
+}}
+</script>
+</body>
+</html>'''
+
+    (SITE_DIR / 'results' / 'comparison.html').write_text(html)
+    print('  results/comparison.html')
 
 
 def generate_summary():
@@ -1055,6 +1401,7 @@ def main():
     generate_index()
     generate_benchmark()
     generate_embeddings()
+    generate_comparison(runs)
     generate_summary()
     generate_experiments(runs)
 
