@@ -327,9 +327,10 @@ def normalize_index(index: str) -> list[dict]:
 
             if use_precomputed:
                 # Events v2: use pre-computed metrics from evaluate_events_v2.py
-                aggregated = data.get('metrics', {})
+                aggregated = dict(data.get('metrics', {}))
                 if not aggregated:
                     continue
+                # F1 will be recalculated below from per_query after building it
 
                 # Build per-query from results (already has ndcg@10, mrr per query)
                 per_query = []
@@ -342,6 +343,18 @@ def normalize_index(index: str) -> list[dict]:
                         {'id': str(item.get('product_id', '')), 'name': item.get('name', ''), 'score': round(item.get('score') or 0, 4), 'relevance': item.get('relevant', 0)}
                         for item in r.get('results', [])[:10]
                     ]
+                    # Compute F1 from relevance counts
+                    n_rel_10 = r.get('n_relevant', sum(1 for it in items if it.get('relevance', 0) > 0))
+                    gt_j = gt.get(qid, {})
+                    total_rel = len(gt_j)
+                    p10 = n_rel_10 / 10 if r.get('n_results', 0) >= 10 else (n_rel_10 / max(r.get('n_results', 1), 1))
+                    r10 = n_rel_10 / total_rel if total_rel > 0 else 0
+                    f1_10 = round(2 * p10 * r10 / (p10 + r10) if (p10 + r10) > 0 else 0, 4)
+                    n_rel_5 = sum(1 for it in items[:5] if it.get('relevance', 0) > 0)
+                    p5 = n_rel_5 / 5
+                    r5 = n_rel_5 / total_rel if total_rel > 0 else 0
+                    f1_5 = round(2 * p5 * r5 / (p5 + r5) if (p5 + r5) > 0 else 0, 4)
+
                     per_query.append({
                         'query_id': qid,
                         'query': q_info.get('query', r.get('query', '')),
@@ -349,13 +362,18 @@ def normalize_index(index: str) -> list[dict]:
                         'n_results': r.get('n_results', len(items)),
                         'ndcg@5': r.get('ndcg@5', 0),
                         'ndcg@10': r.get('ndcg@10', 0),
-                        'precision@5': r.get('precision@5', 0),
-                        'precision@10': r.get('precision@10', 0),
-                        'f1@5': 0,
-                        'f1@10': 0,
+                        'precision@5': round(p5, 4),
+                        'precision@10': round(p10, 4),
+                        'f1@5': f1_5,
+                        'f1@10': f1_10,
                         'mrr': r.get('mrr', 0),
                         'items': items,
                     })
+                # Add F1 to aggregated
+                if per_query:
+                    n_pq = len(per_query)
+                    aggregated['f1@5'] = round(sum(q['f1@5'] for q in per_query) / n_pq, 4)
+                    aggregated['f1@10'] = round(sum(q['f1@10'] for q in per_query) / n_pq, 4)
             else:
                 # Products/cross-index: compute from GT
                 results_by_query = extract_results(data)
